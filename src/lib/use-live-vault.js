@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { listRecentKnowledge } from './mcp';
+import { fetchVaultIndex } from './cortex-api';
 const CANONICAL = [
     { path: 'FOUNDATION.md', updated: '', title: 'FOUNDATION' },
     { path: 'NAMING_CONVENTIONS.md', updated: '', title: 'NAMING_CONVENTIONS' },
@@ -24,15 +25,21 @@ export function useLiveVault() {
     });
     useEffect(() => {
         let cancelled = false;
-        listRecentKnowledge(50)
+        fetchVaultIndex()
+            .catch(() => listRecentKnowledge(50))
             .then((recent) => {
             if (cancelled)
                 return;
             const dedup = new Map();
             for (const e of CANONICAL)
                 dedup.set(e.path, { ...e, group: classify(e.path) });
-            for (const e of recent)
-                dedup.set(e.path, { ...e, group: classify(e.path) });
+            for (const e of recent) {
+                dedup.set(e.path, {
+                    ...e,
+                    updated: e.updated || '',
+                    group: classify(e.path),
+                });
+            }
             setState({
                 entries: Array.from(dedup.values()),
                 loading: false,

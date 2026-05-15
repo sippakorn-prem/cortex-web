@@ -32,31 +32,38 @@ npm run preview
 
 ## Configure MCP (runtime)
 
-Browser-side MCP client lives at `src/lib/mcp.ts`. Set:
+Browser-side REST and MCP clients live at `src/lib/cortex-api.ts` and
+`src/lib/mcp.ts`. Set:
 
 ```bash
 # .env
+VITE_CORTEX_API_URL=https://cortex-mcp.sippakorn.page       # optional
+VITE_CORTEX_API_TOKEN=<token>                               # optional
 VITE_CORTEX_MCP_URL=https://cortex-mcp.sippakorn.page/mcp   # optional
-VITE_CORTEX_MCP_TOKEN=<token>                                # required for live
+VITE_CORTEX_MCP_TOKEN=<token>                                # required for MCP doc/search
 ```
 
 Security note: `VITE_*` env is bundled into the client. The token is a
-public, read-only credential — never put a write-capable token here. The MCP
-server enforces CORS + scope at the edge.
+public, read-only credential — never put a write-capable token here. If REST
+auth requires a real secret, proxy it server-side instead of exposing it in
+Vite env.
 
 ### Live data coverage
 
 | Tab | Source | Notes |
 |---|---|---|
-| Home | sample | server has no activity/stats endpoint |
-| Graph | sample | server has no graph endpoint |
+| Home | live REST + sample fallback | stats from `GET /api/stats`; activity is still sample |
+| Graph | live REST + sample fallback | nodes/edges from `GET /api/graph` |
 | Decisions | sample | rationale chain needs edge data the server doesn't expose |
 | AI Role | static | self-documenting |
-| **Browse** | **live MCP** | tree, doc body, search wired via `cortex_list_recent_knowledge`, `cortex_get_document`, `cortex_search` |
+| **Browse** | **live REST + MCP** | tree from `GET /api/index`; doc body/search still use `cortex_get_document`, `cortex_search` |
 
-Tree shows canonical files + `30_Knowledge/` (server's `cortex_list_recent_knowledge` is scoped to that folder). Other folders are surfaced via the search bar — type a query and the results list takes over the left pane.
+Tree shows the live vault index grouped by canonical, sessions, decisions, and
+knowledge when the REST API is reachable. It falls back to MCP recent knowledge
+plus canonical files if REST is unavailable.
 
-Topbar shows `mcp healthy` + `live · cortex-mcp` on the Browse tab when the token is set and `/health` is `ok`.
+Topbar shows `api live` + `live · cortex-api` once graph, stats, and index have
+loaded from REST. Otherwise it keeps the sample fallback visible.
 
 ## Source
 

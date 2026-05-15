@@ -2,41 +2,49 @@ import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { GRAPH } from '../data/graph';
 import { NOTES } from '../data/notes';
+const OBSIDIAN_TUNE = {
+    linkDistance: 86,
+    repel: 1900,
+    center: 0.024,
+    labelThreshold: 2.2,
+    showSessions: true,
+};
 const KIND_COLORS = {
-    decision: { fill: 'oklch(0.30 0.07 60)', stroke: 'oklch(0.78 0.13 60)' },
-    knowledge: { fill: '#0d0c0a', stroke: '#ECE7DC' },
-    session: { fill: '#1c1b18', stroke: '#7a7468' },
-    principle: { fill: 'oklch(0.30 0.07 60)', stroke: 'oklch(0.85 0.15 60)' },
+    decision: { fill: '#b7b9c0', stroke: '#d5d7dc' },
+    knowledge: { fill: '#a7a9af', stroke: '#d0d2d7' },
+    session: { fill: '#55585d', stroke: '#6b6e74' },
+    principle: { fill: '#8f9299', stroke: '#c4c6cc' },
 };
 const EDGE_STYLE = {
-    cites: { stroke: '#3a3631', width: 0.8, dash: '' },
-    related: { stroke: '#3a3631', width: 0.8, dash: '' },
-    imports: { stroke: 'oklch(0.55 0.10 60 / 0.7)', width: 1.0, dash: '' },
-    derived: { stroke: 'oklch(0.62 0.12 60 / 0.85)', width: 1.2, dash: '' },
-    supersedes: { stroke: 'oklch(0.55 0.14 25 / 0.8)', width: 1.2, dash: '5 4' },
-    src: { stroke: '#26241f', width: 0.7, dash: '2 4' },
+    cites: { stroke: '#4b4d52', width: 0.72, dash: '' },
+    related: { stroke: '#43454a', width: 0.65, dash: '' },
+    imports: { stroke: '#5b5e64', width: 0.8, dash: '' },
+    derived: { stroke: '#62656c', width: 0.86, dash: '' },
+    supersedes: { stroke: '#666a72', width: 0.86, dash: '4 4' },
+    src: { stroke: '#3d3f44', width: 0.58, dash: '2 4' },
 };
-export function GraphView({ goToNote }) {
-    const { nodes: rawNodes, edges } = GRAPH;
+export function GraphView({ goToNote, graph = GRAPH, index = [], }) {
+    const { nodes: rawNodes, edges } = graph;
     const simRef = useRef(null);
     const [, setVersion] = useState(0);
     const tick = useCallback(() => setVersion((v) => (v + 1) % 1e9), []);
-    const [tune, setTune] = useState({
-        linkDistance: 90,
-        repel: 1800,
-        center: 0.02,
-        labelThreshold: 0.55,
-        showSessions: true,
-    });
+    const [tune, setTune] = useState(OBSIDIAN_TUNE);
     const viewRef = useRef({ x: 0, y: 0, zoom: 1 });
-    const [selected, setSelected] = useState('ADR-015');
+    const [selected, setSelected] = useState(null);
     const [hover, setHover] = useState(null);
     const [search, setSearch] = useState('');
     const [kindFilter, setKindFilter] = useState({
         decision: true, knowledge: true, session: true, principle: true,
     });
     useEffect(() => {
-        const radii = { decision: 200, knowledge: 320, session: 460, principle: 140 };
+        if (!rawNodes.length)
+            return;
+        if (selected && rawNodes.every((n) => n.id !== selected)) {
+            setSelected(null);
+        }
+    }, [rawNodes, selected]);
+    useEffect(() => {
+        const radii = { decision: 170, knowledge: 245, session: 330, principle: 135 };
         const counts = {};
         for (const n of rawNodes)
             counts[n.kind] = (counts[n.kind] || 0) + 1;
@@ -49,11 +57,11 @@ export function GraphView({ goToNote }) {
             const seed = [...n.id].reduce((a, c) => (a * 31 + c.charCodeAt(0)) | 0, 0);
             const phase = ((seed >>> 4) & 0xff) / 0xff;
             const angle = ((idx + phase) / total) * Math.PI * 2;
-            const r = (radii[k] || 280) * (0.85 + ((seed >>> 12) & 0xff) / 0xff * 0.3);
+            const r = (radii[k] || 170) * (0.85 + ((seed >>> 12) & 0xff) / 0xff * 0.3);
             return {
                 ...n,
-                x: Math.cos(angle) * r,
-                y: Math.sin(angle) * r * 0.75,
+                x: Math.cos(angle) * r * 0.78,
+                y: Math.sin(angle) * r * 1.14,
                 vx: 0, vy: 0, fx: null, fy: null,
             };
         });
@@ -65,6 +73,10 @@ export function GraphView({ goToNote }) {
             return;
         let alpha = 1;
         let raf = 0;
+        const linkPairs = Array.from(new Map(edges.map(([a, b]) => {
+            const key = a < b ? `${a}\u0000${b}` : `${b}\u0000${a}`;
+            return [key, [a, b]];
+        })).values());
         const step = () => {
             const sim = simRef.current;
             const nodes = sim.nodes;
@@ -78,7 +90,7 @@ export function GraphView({ goToNote }) {
                     if (d2 < 1)
                         d2 = 1;
                     const d = Math.sqrt(d2);
-                    const f = tune.repel / d2;
+                    const f = (tune.repel * alpha) / d2;
                     const fx = (dx / d) * f, fy = (dy / d) * f;
                     a.vx -= fx;
                     a.vy -= fy;
@@ -86,13 +98,13 @@ export function GraphView({ goToNote }) {
                     b.vy += fy;
                 }
             }
-            for (const [aId, bId] of edges) {
+            for (const [aId, bId] of linkPairs) {
                 const a = byId[aId], b = byId[bId];
                 if (!a || !b)
                     continue;
                 const dx = b.x - a.x, dy = b.y - a.y;
                 const d = Math.sqrt(dx * dx + dy * dy) || 1;
-                const k = 0.06 * (d - tune.linkDistance) / d;
+                const k = 0.035 * alpha * (d - tune.linkDistance) / d;
                 const fx = dx * k, fy = dy * k;
                 a.vx += fx;
                 a.vy += fy;
@@ -100,10 +112,12 @@ export function GraphView({ goToNote }) {
                 b.vy -= fy;
             }
             for (const n of nodes) {
-                n.vx -= n.x * tune.center;
-                n.vy -= n.y * tune.center;
+                n.vx -= n.x * tune.center * alpha;
+                n.vy -= n.y * tune.center * alpha;
+                n.vx += (Math.random() - 0.5) * 0.002 * alpha;
+                n.vy += (Math.random() - 0.5) * 0.002 * alpha;
             }
-            const damp = 0.45;
+            const damp = 0.62;
             for (const n of nodes) {
                 if (n.fx !== null) {
                     n.x = n.fx;
@@ -122,7 +136,7 @@ export function GraphView({ goToNote }) {
                 n.x += n.vx * alpha;
                 n.y += n.vy * alpha;
             }
-            alpha = Math.max(0, alpha - 0.005);
+            alpha = Math.max(0, alpha - 0.0035);
             tick();
             if (alpha > 0.01)
                 raf = requestAnimationFrame(step);
@@ -241,6 +255,16 @@ export function GraphView({ goToNote }) {
         }
         return s;
     }, [search, rawNodes]);
+    const degreeById = useMemo(() => {
+        const out = {};
+        for (const n of rawNodes)
+            out[n.id] = 0;
+        for (const [a, b] of edges) {
+            out[a] = (out[a] || 0) + 1;
+            out[b] = (out[b] || 0) + 1;
+        }
+        return out;
+    }, [edges, rawNodes]);
     const isDim = (id, kind) => {
         if (!kindFilter[kind])
             return true;
@@ -262,13 +286,22 @@ export function GraphView({ goToNote }) {
         const isFocus = selected === id || hover === id;
         if (isFocus)
             return 1;
+        if (searchMatches?.has(id))
+            return 0.95;
         if (z < tune.labelThreshold)
             return 0;
-        return Math.min(1, (z - tune.labelThreshold) * 2.2);
+        return Math.min(0.55, (z - tune.labelThreshold) * 0.75);
     };
     const selectedNode = selected && sim ? sim.byId[selected] : null;
     const selectedDeg = selected ? edges.filter((e) => e[0] === selected || e[1] === selected).length : 0;
-    const selectedNote = selected ? NOTES.find((n) => n.id === selected) : null;
+    const selectedNote = selected
+        ? NOTES.find((n) => n.id === selected) ||
+            index.find((n) => n.id === selected || n.path === selected || n.path === selectedNode?.path)
+        : null;
+    const openNode = (id) => {
+        const node = rawNodes.find((n) => n.id === id);
+        goToNote(node?.path || id);
+    };
     useEffect(() => {
         if (!sim)
             return;
@@ -297,7 +330,7 @@ export function GraphView({ goToNote }) {
     }, [sim, tick]);
     const view = viewRef.current;
     return (_jsxs("div", { className: "gr", children: [_jsxs("svg", { ref: svgRef, onPointerDown: onPanPointerDown, onPointerMove: onPointerMove, onPointerUp: onPointerUp, onPointerCancel: onPointerUp, onClick: (e) => { if (e.target === svgRef.current)
-                    setSelected(null); }, children: [_jsxs("defs", { children: [_jsxs("radialGradient", { id: "halo-amber", cx: "50%", cy: "50%", r: "50%", children: [_jsx("stop", { offset: "0%", stopColor: "oklch(0.78 0.14 60)", stopOpacity: "0.45" }), _jsx("stop", { offset: "100%", stopColor: "oklch(0.55 0.10 60)", stopOpacity: "0" })] }), _jsxs("radialGradient", { id: "halo-cream", cx: "50%", cy: "50%", r: "50%", children: [_jsx("stop", { offset: "0%", stopColor: "#ECE7DC", stopOpacity: "0.20" }), _jsx("stop", { offset: "100%", stopColor: "#ECE7DC", stopOpacity: "0" })] }), _jsxs("radialGradient", { id: "halo-focus", cx: "50%", cy: "50%", r: "50%", children: [_jsx("stop", { offset: "0%", stopColor: "oklch(0.85 0.16 60)", stopOpacity: "0.65" }), _jsx("stop", { offset: "100%", stopColor: "oklch(0.55 0.10 60)", stopOpacity: "0" })] })] }), sim && (() => {
+                    setSelected(null); }, children: [_jsx("defs", { children: _jsxs("radialGradient", { id: "halo-focus", cx: "50%", cy: "50%", r: "50%", children: [_jsx("stop", { offset: "0%", stopColor: "#f1f3f7", stopOpacity: "0.34" }), _jsx("stop", { offset: "100%", stopColor: "#f1f3f7", stopOpacity: "0" })] }) }), sim && (() => {
                         const svgRect = svgRef.current?.getBoundingClientRect();
                         const cx = (svgRect?.width || 1240) / 2;
                         const cy = (svgRect?.height || 720) / 2;
@@ -307,18 +340,16 @@ export function GraphView({ goToNote }) {
                                         return null;
                                     const dim = isEdgeDim(a, b) || !kindFilter[na.kind] || !kindFilter[nb.kind];
                                     const st = EDGE_STYLE[kind] || EDGE_STYLE.cites;
-                                    return (_jsx("line", { x1: na.x, y1: na.y, x2: nb.x, y2: nb.y, stroke: st.stroke, strokeWidth: st.width / view.zoom, strokeDasharray: st.dash, opacity: dim ? 0.1 : 1 }, i));
+                                    return (_jsx("line", { x1: na.x, y1: na.y, x2: nb.x, y2: nb.y, stroke: st.stroke, strokeWidth: st.width / view.zoom, strokeDasharray: st.dash, opacity: dim ? 0.08 : 0.58 }, i));
                                 }), sim.nodes.map((n) => {
                                     const dim = isDim(n.id, n.kind);
                                     const isFocus = selected === n.id;
                                     const isHover = hover === n.id;
                                     const c = KIND_COLORS[n.kind] || KIND_COLORS.knowledge;
-                                    const baseR = n.kind === 'session' ? 4 : n.kind === 'decision' ? 8 : 7;
-                                    const r = (isFocus || isHover) ? baseR + 3 : baseR;
-                                    const haloId = isFocus
-                                        ? 'halo-focus'
-                                        : n.kind === 'decision' ? 'halo-amber' : 'halo-cream';
-                                    return (_jsxs("g", { className: `gr-node ${n.kind}`, opacity: n.faded ? 0.4 : (dim ? 0.18 : 1), onPointerDown: (e) => onNodePointerDown(e, n.id), onMouseEnter: () => setHover(n.id), onMouseLeave: () => setHover(null), onDoubleClick: () => goToNote(n.id), style: { cursor: 'pointer' }, children: [_jsx("circle", { cx: n.x, cy: n.y, r: (isFocus || isHover) ? 26 : 16, fill: `url(#${haloId})` }), _jsx("circle", { cx: n.x, cy: n.y, r: r, fill: c.fill, stroke: c.stroke, strokeWidth: (isFocus ? 2 : 1.2) / view.zoom }), n.kind !== 'session' && (_jsx("text", { x: n.x, y: n.y + r + 14 / view.zoom, opacity: labelOpacity(n.id), fontSize: 11 / view.zoom, fill: isFocus ? '#ECE7DC' : '#908A7E', children: n.label }))] }, n.id));
+                                    const baseR = Math.min(9.5, 2.8 + Math.sqrt(degreeById[n.id] || 1) * 0.88);
+                                    const r = (isFocus || isHover) ? baseR + 2.8 : baseR;
+                                    const textOpacity = labelOpacity(n.id);
+                                    return (_jsxs("g", { className: `gr-node ${n.kind}`, opacity: n.faded ? 0.28 : (dim ? 0.16 : 0.92), onPointerDown: (e) => onNodePointerDown(e, n.id), onMouseEnter: () => setHover(n.id), onMouseLeave: () => setHover(null), onDoubleClick: () => openNode(n.id), style: { cursor: 'pointer' }, children: [(isFocus || isHover) && (_jsx("circle", { cx: n.x, cy: n.y, r: 26, fill: "url(#halo-focus)" })), _jsx("circle", { cx: n.x, cy: n.y, r: r, fill: c.fill, stroke: c.stroke, strokeWidth: (isFocus ? 1.8 : 0.8) / view.zoom }), textOpacity > 0.03 && (_jsx("text", { x: n.x, y: n.y + r + 12 / view.zoom, opacity: textOpacity, fontSize: 10 / view.zoom, fill: isFocus || isHover ? '#eef0f4' : '#a8abb1', children: n.label }))] }, n.id));
                                 })] }));
-                    })()] }), _jsxs("div", { className: "gr-controls", children: [_jsxs("div", { className: "gr-search", children: [_jsxs("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", stroke: "var(--cx-fg-3)", strokeWidth: "1.4", children: [_jsx("circle", { cx: "5", cy: "5", r: "3.5" }), _jsx("path", { d: "M8 8l3 3", strokeLinecap: "round" })] }), _jsx("input", { placeholder: "search nodes\u2026", value: search, onChange: (e) => setSearch(e.target.value) }), searchMatches && _jsx("span", { className: "count", children: searchMatches.size })] }), _jsx("div", { className: "gr-chips", children: Object.entries(kindFilter).map(([k, on]) => (_jsxs("span", { className: `gr-chip ${on ? 'on' : ''}`, onClick: () => setKindFilter((kf) => ({ ...kf, [k]: !kf[k] })), children: [_jsx("span", { className: "sw", style: { background: KIND_COLORS[k].stroke } }), k] }, k))) })] }), _jsxs("div", { className: "gr-settings", children: [_jsx("div", { className: "label", children: "\u2014 Forces" }), _jsxs("div", { className: "row", children: [_jsxs("div", { className: "top", children: [_jsx("span", { children: "Link distance" }), _jsx("em", { children: tune.linkDistance })] }), _jsx("input", { type: "range", min: "40", max: "220", step: "2", value: tune.linkDistance, onChange: (e) => setTune((t) => ({ ...t, linkDistance: +e.target.value })) })] }), _jsxs("div", { className: "row", children: [_jsxs("div", { className: "top", children: [_jsx("span", { children: "Repel" }), _jsx("em", { children: tune.repel })] }), _jsx("input", { type: "range", min: "400", max: "5000", step: "50", value: tune.repel, onChange: (e) => setTune((t) => ({ ...t, repel: +e.target.value })) })] }), _jsxs("div", { className: "row", children: [_jsxs("div", { className: "top", children: [_jsx("span", { children: "Center pull" }), _jsx("em", { children: tune.center.toFixed(3) })] }), _jsx("input", { type: "range", min: "0", max: "0.08", step: "0.002", value: tune.center, onChange: (e) => setTune((t) => ({ ...t, center: +e.target.value })) })] }), _jsxs("div", { className: "row", children: [_jsxs("div", { className: "top", children: [_jsx("span", { children: "Label threshold" }), _jsx("em", { children: tune.labelThreshold.toFixed(2) })] }), _jsx("input", { type: "range", min: "0", max: "1.5", step: "0.05", value: tune.labelThreshold, onChange: (e) => setTune((t) => ({ ...t, labelThreshold: +e.target.value })) })] })] }), _jsxs("div", { className: "gr-legend", children: [_jsxs("div", { className: "stat", children: [_jsx("span", { children: "nodes" }), _jsx("span", { className: "n", children: rawNodes.length })] }), _jsxs("div", { className: "stat", children: [_jsx("span", { children: "edges" }), _jsx("span", { className: "n", children: edges.length })] }), _jsxs("div", { className: "stat", children: [_jsx("span", { children: "zoom" }), _jsxs("span", { className: "n", children: [view.zoom.toFixed(2), "\u00D7"] })] }), _jsxs("div", { className: "hint", children: [_jsx("kbd", { children: "drag" }), " pan \u00B7 ", _jsx("kbd", { children: "wheel" }), " zoom \u00B7 ", _jsx("kbd", { children: "click" }), " focus \u00B7 ", _jsx("kbd", { children: "2\u00D7" }), " open"] })] }), selected && selectedNode && (_jsxs("div", { className: "gr-detail", children: [_jsxs("div", { className: "id", children: [selected, " \u00B7 ", selectedNode.kind.toUpperCase()] }), _jsx("h4", { children: selectedNode.label }), selectedNote && selectedNote.lede && _jsx("p", { children: selectedNote.lede }), _jsxs("div", { className: "stats", children: [_jsxs("div", { children: [_jsx("span", { className: "n", children: selectedDeg }), _jsx("span", { className: "l", children: "degree" })] }), _jsxs("div", { children: [_jsx("span", { className: "n", children: edges.filter((e) => e[1] === selected).length }), _jsx("span", { className: "l", children: "in" })] }), _jsxs("div", { children: [_jsx("span", { className: "n", children: edges.filter((e) => e[0] === selected).length }), _jsx("span", { className: "l", children: "out" })] })] }), selectedNote && (_jsx("button", { className: "open", onClick: () => goToNote(selected), children: "open in Knowledge \u2192" }))] }))] }));
+                    })()] }), _jsxs("div", { className: "gr-controls", children: [_jsxs("div", { className: "gr-search", children: [_jsxs("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", stroke: "var(--cx-fg-3)", strokeWidth: "1.4", children: [_jsx("circle", { cx: "5", cy: "5", r: "3.5" }), _jsx("path", { d: "M8 8l3 3", strokeLinecap: "round" })] }), _jsx("input", { placeholder: "search nodes\u2026", value: search, onChange: (e) => setSearch(e.target.value) }), searchMatches && _jsx("span", { className: "count", children: searchMatches.size })] }), _jsx("div", { className: "gr-chips", children: Object.entries(kindFilter).map(([k, on]) => (_jsxs("span", { className: `gr-chip ${on ? 'on' : ''}`, onClick: () => setKindFilter((kf) => ({ ...kf, [k]: !kf[k] })), children: [_jsx("span", { className: "sw", style: { background: KIND_COLORS[k].stroke } }), k] }, k))) })] }), _jsxs("div", { className: "gr-settings", children: [_jsx("div", { className: "label", children: "\u2014 Forces" }), _jsxs("div", { className: "row", children: [_jsxs("div", { className: "top", children: [_jsx("span", { children: "Link distance" }), _jsx("em", { children: tune.linkDistance })] }), _jsx("input", { type: "range", min: "32", max: "180", step: "2", value: tune.linkDistance, onChange: (e) => setTune((t) => ({ ...t, linkDistance: +e.target.value })) })] }), _jsxs("div", { className: "row", children: [_jsxs("div", { className: "top", children: [_jsx("span", { children: "Repel" }), _jsx("em", { children: tune.repel })] }), _jsx("input", { type: "range", min: "400", max: "3200", step: "50", value: tune.repel, onChange: (e) => setTune((t) => ({ ...t, repel: +e.target.value })) })] }), _jsxs("div", { className: "row", children: [_jsxs("div", { className: "top", children: [_jsx("span", { children: "Center pull" }), _jsx("em", { children: tune.center.toFixed(3) })] }), _jsx("input", { type: "range", min: "0", max: "0.12", step: "0.002", value: tune.center, onChange: (e) => setTune((t) => ({ ...t, center: +e.target.value })) })] }), _jsxs("div", { className: "row", children: [_jsxs("div", { className: "top", children: [_jsx("span", { children: "Label threshold" }), _jsx("em", { children: tune.labelThreshold.toFixed(2) })] }), _jsx("input", { type: "range", min: "0", max: "1.5", step: "0.05", value: tune.labelThreshold, onChange: (e) => setTune((t) => ({ ...t, labelThreshold: +e.target.value })) })] }), _jsx("button", { className: "preset", onClick: () => setTune(OBSIDIAN_TUNE), children: "Obsidian preset" })] }), _jsxs("div", { className: "gr-legend", children: [_jsxs("div", { className: "stat", children: [_jsx("span", { children: "nodes" }), _jsx("span", { className: "n", children: rawNodes.length })] }), _jsxs("div", { className: "stat", children: [_jsx("span", { children: "edges" }), _jsx("span", { className: "n", children: edges.length })] }), _jsxs("div", { className: "stat", children: [_jsx("span", { children: "zoom" }), _jsxs("span", { className: "n", children: [view.zoom.toFixed(2), "\u00D7"] })] }), _jsxs("div", { className: "hint", children: [_jsx("kbd", { children: "drag" }), " pan \u00B7 ", _jsx("kbd", { children: "wheel" }), " zoom \u00B7 ", _jsx("kbd", { children: "click" }), " focus \u00B7 ", _jsx("kbd", { children: "2\u00D7" }), " open"] })] }), selected && selectedNode && (_jsxs("div", { className: "gr-detail", children: [_jsxs("div", { className: "id", children: [selected, " \u00B7 ", selectedNode.kind.toUpperCase()] }), _jsx("h4", { children: selectedNode.label }), selectedNote && selectedNote.lede && _jsx("p", { children: selectedNote.lede }), _jsxs("div", { className: "stats", children: [_jsxs("div", { children: [_jsx("span", { className: "n", children: selectedDeg }), _jsx("span", { className: "l", children: "degree" })] }), _jsxs("div", { children: [_jsx("span", { className: "n", children: edges.filter((e) => e[1] === selected).length }), _jsx("span", { className: "l", children: "in" })] }), _jsxs("div", { children: [_jsx("span", { className: "n", children: edges.filter((e) => e[0] === selected).length }), _jsx("span", { className: "l", children: "out" })] })] }), selectedNote && (_jsx("button", { className: "open", onClick: () => openNode(selected), children: "open in Knowledge \u2192" }))] }))] }));
 }

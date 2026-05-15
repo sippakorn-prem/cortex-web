@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { GRAPH } from '../data/graph';
 import { NOTES } from '../data/notes';
-import type { GraphNode, NoteKind } from '../data/types';
+import type { Graph, GraphNode, NoteKind } from '../data/types';
+import type { ApiIndexEntry } from '../lib/cortex-api';
 
 interface SimNode extends GraphNode {
   x: number;
@@ -12,40 +13,50 @@ interface SimNode extends GraphNode {
   fy: number | null;
 }
 
+const OBSIDIAN_TUNE = {
+  linkDistance: 86,
+  repel: 1900,
+  center: 0.024,
+  labelThreshold: 2.2,
+  showSessions: true,
+};
+
 interface KindStyle { fill: string; stroke: string }
 const KIND_COLORS: Record<NoteKind, KindStyle> = {
-  decision:  { fill: 'oklch(0.30 0.07 60)', stroke: 'oklch(0.78 0.13 60)' },
-  knowledge: { fill: '#0d0c0a',              stroke: '#ECE7DC' },
-  session:   { fill: '#1c1b18',              stroke: '#7a7468' },
-  principle: { fill: 'oklch(0.30 0.07 60)', stroke: 'oklch(0.85 0.15 60)' },
+  decision:  { fill: '#b7b9c0', stroke: '#d5d7dc' },
+  knowledge: { fill: '#a7a9af', stroke: '#d0d2d7' },
+  session:   { fill: '#55585d', stroke: '#6b6e74' },
+  principle: { fill: '#8f9299', stroke: '#c4c6cc' },
 };
 
 const EDGE_STYLE: Record<string, { stroke: string; width: number; dash: string }> = {
-  cites:      { stroke: '#3a3631', width: 0.8, dash: '' },
-  related:    { stroke: '#3a3631', width: 0.8, dash: '' },
-  imports:    { stroke: 'oklch(0.55 0.10 60 / 0.7)', width: 1.0, dash: '' },
-  derived:    { stroke: 'oklch(0.62 0.12 60 / 0.85)', width: 1.2, dash: '' },
-  supersedes: { stroke: 'oklch(0.55 0.14 25 / 0.8)', width: 1.2, dash: '5 4' },
-  src:        { stroke: '#26241f', width: 0.7, dash: '2 4' },
+  cites:      { stroke: '#4b4d52', width: 0.72, dash: '' },
+  related:    { stroke: '#43454a', width: 0.65, dash: '' },
+  imports:    { stroke: '#5b5e64', width: 0.8, dash: '' },
+  derived:    { stroke: '#62656c', width: 0.86, dash: '' },
+  supersedes: { stroke: '#666a72', width: 0.86, dash: '4 4' },
+  src:        { stroke: '#3d3f44', width: 0.58, dash: '2 4' },
 };
 
-export function GraphView({ goToNote }: { goToNote: (id: string) => void }) {
-  const { nodes: rawNodes, edges } = GRAPH;
+export function GraphView({
+  goToNote,
+  graph = GRAPH,
+  index = [],
+}: {
+  goToNote: (id: string) => void;
+  graph?: Graph;
+  index?: ApiIndexEntry[];
+}) {
+  const { nodes: rawNodes, edges } = graph;
 
   const simRef = useRef<{ nodes: SimNode[]; byId: Record<string, SimNode> } | null>(null);
   const [, setVersion] = useState(0);
   const tick = useCallback(() => setVersion((v) => (v + 1) % 1e9), []);
 
-  const [tune, setTune] = useState({
-    linkDistance: 90,
-    repel: 1800,
-    center: 0.02,
-    labelThreshold: 0.55,
-    showSessions: true,
-  });
+  const [tune, setTune] = useState(OBSIDIAN_TUNE);
 
   const viewRef = useRef({ x: 0, y: 0, zoom: 1 });
-  const [selected, setSelected] = useState<string | null>('ADR-015');
+  const [selected, setSelected] = useState<string | null>(null);
   const [hover, setHover] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [kindFilter, setKindFilter] = useState<Record<NoteKind, boolean>>({
@@ -53,7 +64,14 @@ export function GraphView({ goToNote }: { goToNote: (id: string) => void }) {
   });
 
   useEffect(() => {
-    const radii: Record<NoteKind, number> = { decision: 200, knowledge: 320, session: 460, principle: 140 };
+    if (!rawNodes.length) return;
+    if (selected && rawNodes.every((n) => n.id !== selected)) {
+      setSelected(null);
+    }
+  }, [rawNodes, selected]);
+
+  useEffect(() => {
+    const radii: Record<NoteKind, number> = { decision: 170, knowledge: 245, session: 330, principle: 135 };
     const counts: Partial<Record<NoteKind, number>> = {};
     for (const n of rawNodes) counts[n.kind] = (counts[n.kind] || 0) + 1;
     const seen: Partial<Record<NoteKind, number>> = {};
@@ -65,11 +83,11 @@ export function GraphView({ goToNote }: { goToNote: (id: string) => void }) {
       const seed = [...n.id].reduce((a, c) => (a * 31 + c.charCodeAt(0)) | 0, 0);
       const phase = ((seed >>> 4) & 0xff) / 0xff;
       const angle = ((idx + phase) / total) * Math.PI * 2;
-      const r = (radii[k] || 280) * (0.85 + ((seed >>> 12) & 0xff) / 0xff * 0.3);
+      const r = (radii[k] || 170) * (0.85 + ((seed >>> 12) & 0xff) / 0xff * 0.3);
       return {
         ...n,
-        x: Math.cos(angle) * r,
-        y: Math.sin(angle) * r * 0.75,
+        x: Math.cos(angle) * r * 0.78,
+        y: Math.sin(angle) * r * 1.14,
         vx: 0, vy: 0, fx: null, fy: null,
       };
     });
@@ -81,6 +99,12 @@ export function GraphView({ goToNote }: { goToNote: (id: string) => void }) {
     if (!simRef.current) return;
     let alpha = 1;
     let raf = 0;
+    const linkPairs = Array.from(
+      new Map(edges.map(([a, b]) => {
+        const key = a < b ? `${a}\u0000${b}` : `${b}\u0000${a}`;
+        return [key, [a, b] as [string, string]];
+      })).values()
+    );
     const step = () => {
       const sim = simRef.current!;
       const nodes = sim.nodes;
@@ -93,27 +117,29 @@ export function GraphView({ goToNote }: { goToNote: (id: string) => void }) {
           let d2 = dx * dx + dy * dy;
           if (d2 < 1) d2 = 1;
           const d = Math.sqrt(d2);
-          const f = tune.repel / d2;
+          const f = (tune.repel * alpha) / d2;
           const fx = (dx / d) * f, fy = (dy / d) * f;
           a.vx -= fx; a.vy -= fy;
           b.vx += fx; b.vy += fy;
         }
       }
-      for (const [aId, bId] of edges) {
+      for (const [aId, bId] of linkPairs) {
         const a = byId[aId], b = byId[bId];
         if (!a || !b) continue;
         const dx = b.x - a.x, dy = b.y - a.y;
         const d = Math.sqrt(dx * dx + dy * dy) || 1;
-        const k = 0.06 * (d - tune.linkDistance) / d;
+        const k = 0.035 * alpha * (d - tune.linkDistance) / d;
         const fx = dx * k, fy = dy * k;
         a.vx += fx; a.vy += fy;
         b.vx -= fx; b.vy -= fy;
       }
       for (const n of nodes) {
-        n.vx -= n.x * tune.center;
-        n.vy -= n.y * tune.center;
+        n.vx -= n.x * tune.center * alpha;
+        n.vy -= n.y * tune.center * alpha;
+        n.vx += (Math.random() - 0.5) * 0.002 * alpha;
+        n.vy += (Math.random() - 0.5) * 0.002 * alpha;
       }
-      const damp = 0.45;
+      const damp = 0.62;
       for (const n of nodes) {
         if (n.fx !== null) { n.x = n.fx; n.y = n.fy!; n.vx = 0; n.vy = 0; continue; }
         n.vx *= damp; n.vy *= damp;
@@ -122,7 +148,7 @@ export function GraphView({ goToNote }: { goToNote: (id: string) => void }) {
         n.x += n.vx * alpha;
         n.y += n.vy * alpha;
       }
-      alpha = Math.max(0, alpha - 0.005);
+      alpha = Math.max(0, alpha - 0.0035);
       tick();
       if (alpha > 0.01) raf = requestAnimationFrame(step);
     };
@@ -241,6 +267,16 @@ export function GraphView({ goToNote }: { goToNote: (id: string) => void }) {
     return s;
   }, [search, rawNodes]);
 
+  const degreeById = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const n of rawNodes) out[n.id] = 0;
+    for (const [a, b] of edges) {
+      out[a] = (out[a] || 0) + 1;
+      out[b] = (out[b] || 0) + 1;
+    }
+    return out;
+  }, [edges, rawNodes]);
+
   const isDim = (id: string, kind: NoteKind) => {
     if (!kindFilter[kind]) return true;
     if (searchMatches) return !searchMatches.has(id);
@@ -258,13 +294,22 @@ export function GraphView({ goToNote }: { goToNote: (id: string) => void }) {
     const z = viewRef.current.zoom;
     const isFocus = selected === id || hover === id;
     if (isFocus) return 1;
+    if (searchMatches?.has(id)) return 0.95;
     if (z < tune.labelThreshold) return 0;
-    return Math.min(1, (z - tune.labelThreshold) * 2.2);
+    return Math.min(0.55, (z - tune.labelThreshold) * 0.75);
   };
 
   const selectedNode = selected && sim ? sim.byId[selected] : null;
   const selectedDeg = selected ? edges.filter((e) => e[0] === selected || e[1] === selected).length : 0;
-  const selectedNote = selected ? NOTES.find((n) => n.id === selected) : null;
+  const selectedNote = selected
+    ? NOTES.find((n) => n.id === selected) ||
+      index.find((n) => n.id === selected || n.path === selected || n.path === selectedNode?.path)
+    : null;
+
+  const openNode = (id: string) => {
+    const node = rawNodes.find((n) => n.id === id);
+    goToNote(node?.path || id);
+  };
 
   useEffect(() => {
     if (!sim) return;
@@ -296,17 +341,9 @@ export function GraphView({ goToNote }: { goToNote: (id: string) => void }) {
         onPointerCancel={onPointerUp}
         onClick={(e) => { if (e.target === svgRef.current) setSelected(null); }}>
         <defs>
-          <radialGradient id="halo-amber" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor="oklch(0.78 0.14 60)" stopOpacity="0.45" />
-            <stop offset="100%" stopColor="oklch(0.55 0.10 60)" stopOpacity="0" />
-          </radialGradient>
-          <radialGradient id="halo-cream" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor="#ECE7DC" stopOpacity="0.20" />
-            <stop offset="100%" stopColor="#ECE7DC" stopOpacity="0" />
-          </radialGradient>
           <radialGradient id="halo-focus" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor="oklch(0.85 0.16 60)" stopOpacity="0.65" />
-            <stop offset="100%" stopColor="oklch(0.55 0.10 60)" stopOpacity="0" />
+            <stop offset="0%" stopColor="#f1f3f7" stopOpacity="0.34" />
+            <stop offset="100%" stopColor="#f1f3f7" stopOpacity="0" />
           </radialGradient>
         </defs>
 
@@ -327,7 +364,7 @@ export function GraphView({ goToNote }: { goToNote: (id: string) => void }) {
                     stroke={st.stroke}
                     strokeWidth={st.width / view.zoom}
                     strokeDasharray={st.dash}
-                    opacity={dim ? 0.1 : 1}
+                    opacity={dim ? 0.08 : 0.58}
                   />
                 );
               })}
@@ -336,31 +373,30 @@ export function GraphView({ goToNote }: { goToNote: (id: string) => void }) {
                 const isFocus = selected === n.id;
                 const isHover = hover === n.id;
                 const c = KIND_COLORS[n.kind] || KIND_COLORS.knowledge;
-                const baseR = n.kind === 'session' ? 4 : n.kind === 'decision' ? 8 : 7;
-                const r = (isFocus || isHover) ? baseR + 3 : baseR;
-                const haloId = isFocus
-                  ? 'halo-focus'
-                  : n.kind === 'decision' ? 'halo-amber' : 'halo-cream';
+                const baseR = Math.min(9.5, 2.8 + Math.sqrt(degreeById[n.id] || 1) * 0.88);
+                const r = (isFocus || isHover) ? baseR + 2.8 : baseR;
+                const textOpacity = labelOpacity(n.id);
                 return (
                   <g key={n.id} className={`gr-node ${n.kind}`}
-                    opacity={n.faded ? 0.4 : (dim ? 0.18 : 1)}
+                    opacity={n.faded ? 0.28 : (dim ? 0.16 : 0.92)}
                     onPointerDown={(e) => onNodePointerDown(e, n.id)}
                     onMouseEnter={() => setHover(n.id)}
                     onMouseLeave={() => setHover(null)}
-                    onDoubleClick={() => goToNote(n.id)}
+                    onDoubleClick={() => openNode(n.id)}
                     style={{ cursor: 'pointer' }}>
-                    <circle cx={n.x} cy={n.y} r={(isFocus || isHover) ? 26 : 16}
-                      fill={`url(#${haloId})`} />
+                    {(isFocus || isHover) && (
+                      <circle cx={n.x} cy={n.y} r={26} fill="url(#halo-focus)" />
+                    )}
                     <circle cx={n.x} cy={n.y} r={r}
                       fill={c.fill}
                       stroke={c.stroke}
-                      strokeWidth={(isFocus ? 2 : 1.2) / view.zoom}
+                      strokeWidth={(isFocus ? 1.8 : 0.8) / view.zoom}
                     />
-                    {n.kind !== 'session' && (
-                      <text x={n.x} y={n.y + r + 14 / view.zoom}
-                        opacity={labelOpacity(n.id)}
-                        fontSize={11 / view.zoom}
-                        fill={isFocus ? '#ECE7DC' : '#908A7E'}>
+                    {textOpacity > 0.03 && (
+                      <text x={n.x} y={n.y + r + 12 / view.zoom}
+                        opacity={textOpacity}
+                        fontSize={10 / view.zoom}
+                        fill={isFocus || isHover ? '#eef0f4' : '#a8abb1'}>
                         {n.label}
                       </text>
                     )}
@@ -400,17 +436,17 @@ export function GraphView({ goToNote }: { goToNote: (id: string) => void }) {
         <div className="label">— Forces</div>
         <div className="row">
           <div className="top"><span>Link distance</span><em>{tune.linkDistance}</em></div>
-          <input type="range" min="40" max="220" step="2" value={tune.linkDistance}
+          <input type="range" min="32" max="180" step="2" value={tune.linkDistance}
             onChange={(e) => setTune((t) => ({ ...t, linkDistance: +e.target.value }))} />
         </div>
         <div className="row">
           <div className="top"><span>Repel</span><em>{tune.repel}</em></div>
-          <input type="range" min="400" max="5000" step="50" value={tune.repel}
+          <input type="range" min="400" max="3200" step="50" value={tune.repel}
             onChange={(e) => setTune((t) => ({ ...t, repel: +e.target.value }))} />
         </div>
         <div className="row">
           <div className="top"><span>Center pull</span><em>{tune.center.toFixed(3)}</em></div>
-          <input type="range" min="0" max="0.08" step="0.002" value={tune.center}
+          <input type="range" min="0" max="0.12" step="0.002" value={tune.center}
             onChange={(e) => setTune((t) => ({ ...t, center: +e.target.value }))} />
         </div>
         <div className="row">
@@ -418,6 +454,7 @@ export function GraphView({ goToNote }: { goToNote: (id: string) => void }) {
           <input type="range" min="0" max="1.5" step="0.05" value={tune.labelThreshold}
             onChange={(e) => setTune((t) => ({ ...t, labelThreshold: +e.target.value }))} />
         </div>
+        <button className="preset" onClick={() => setTune(OBSIDIAN_TUNE)}>Obsidian preset</button>
       </div>
 
       <div className="gr-legend">
@@ -440,7 +477,7 @@ export function GraphView({ goToNote }: { goToNote: (id: string) => void }) {
             <div><span className="n">{edges.filter((e) => e[0] === selected).length}</span><span className="l">out</span></div>
           </div>
           {selectedNote && (
-            <button className="open" onClick={() => goToNote(selected)}>
+            <button className="open" onClick={() => openNode(selected)}>
               open in Knowledge →
             </button>
           )}

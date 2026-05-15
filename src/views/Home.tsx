@@ -51,8 +51,8 @@ function ActivityRow({ it }: { it: ActivityItem }) {
   );
 }
 
-export function HomeView() {
-  const s = STATS;
+export function HomeView({ stats = STATS }: { stats?: typeof STATS }) {
+  const s = stats;
   const nav = (hash: string) => (e: React.MouseEvent) => {
     e.preventDefault();
     window.location.hash = hash;

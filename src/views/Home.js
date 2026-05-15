@@ -18,8 +18,8 @@ function ActivityRow({ it }) {
     };
     return (_jsxs("a", { href: it.link, className: "item", onClick: goto, children: [_jsx("span", { className: "time", children: it.t }), _jsx("span", { className: `dot ${it.type}` }), _jsxs("div", { className: "body", children: [_jsx("div", { className: "title", children: it.title }), _jsxs("div", { className: "meta", children: [_jsx("span", { className: `type ${it.type}`, children: it.type }), it.agent && (_jsxs(_Fragment, { children: [_jsx("span", { style: { color: 'var(--cx-fg-4)' }, children: "\u00B7" }), _jsx("span", { children: it.agent })] })), it.tag && (_jsxs(_Fragment, { children: [_jsx("span", { style: { color: 'var(--cx-fg-4)' }, children: "\u00B7" }), _jsx("span", { children: it.tag })] }))] })] }), _jsx("span", { className: "delta", children: it.delta })] }));
 }
-export function HomeView() {
-    const s = STATS;
+export function HomeView({ stats = STATS }) {
+    const s = stats;
     const nav = (hash) => (e) => {
         e.preventDefault();
         window.location.hash = hash;
