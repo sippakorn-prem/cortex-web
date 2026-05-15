@@ -1,0 +1,147 @@
+/* ─────────────────────────────────────────────────────────────
+   Cortex — design tokens
+   Translated from PREM portfolio:
+   - near-black bg (#050505) + warm off-white text
+   - editorial serif display (Instrument Serif)
+   - Geist + Geist Mono for UI/labels
+   - one warm amber accent (matches cafe.png tone)
+   ───────────────────────────────────────────────────────────── */
+
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap');
+
+.cx {
+  /* surfaces */
+  --cx-bg:        #050505;
+  --cx-bg-1:      #0a0a09;   /* one step up — pane background */
+  --cx-bg-2:      #111110;   /* card / hover */
+  --cx-bg-3:      #181715;   /* selected / inset */
+  --cx-border:    #1c1b18;   /* hairline */
+  --cx-border-2:  #2a2824;   /* stronger divider */
+
+  /* text */
+  --cx-fg:        #ECE7DC;   /* warm off-white */
+  --cx-fg-1:      #C9C3B5;   /* secondary */
+  --cx-fg-2:      #908A7E;   /* tertiary */
+  --cx-fg-3:      #6E6A62;   /* muted bone — labels */
+  --cx-fg-4:      #4A4843;   /* very muted */
+
+  /* accent — warm amber (cafe.png tone) */
+  --cx-accent:    oklch(0.72 0.12 60);
+  --cx-accent-d:  oklch(0.60 0.11 60);
+  --cx-accent-bg: oklch(0.30 0.06 60 / 0.18);
+
+  /* semantic */
+  --cx-add:       oklch(0.74 0.10 145);     /* green-ish add */
+  --cx-add-bg:    oklch(0.30 0.05 145 / 0.18);
+  --cx-del:       oklch(0.68 0.14 25);      /* red-ish del */
+  --cx-del-bg:    oklch(0.32 0.07 25 / 0.18);
+  --cx-warn:      oklch(0.78 0.13 85);
+
+  /* type */
+  --cx-serif:     "Instrument Serif", "Iowan Old Style", Georgia, serif;
+  --cx-sans:      "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --cx-mono:      "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* sizes */
+  --cx-size-display: 64px;
+  --cx-size-h1:      36px;
+  --cx-size-h2:      24px;
+  --cx-size-body:    14px;
+  --cx-size-small:   12px;
+  --cx-size-micro:   10.5px;
+
+  background: var(--cx-bg);
+  color: var(--cx-fg);
+  font-family: var(--cx-sans);
+  font-size: var(--cx-size-body);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.cx * { box-sizing: border-box; }
+.cx ::selection { background: var(--cx-accent-bg); color: var(--cx-fg); }
+
+/* type helpers */
+.cx-serif    { font-family: var(--cx-serif); font-weight: 400; }
+.cx-mono     { font-family: var(--cx-mono); }
+.cx-label    { font-family: var(--cx-mono); font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--cx-fg-3); }
+.cx-num      { font-family: var(--cx-mono); font-variant-numeric: tabular-nums; }
+.cx-dim      { color: var(--cx-fg-2); }
+.cx-dim-2    { color: var(--cx-fg-3); }
+
+/* section index — "01 — Vault" */
+.cx-index {
+  font-family: var(--cx-mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--cx-fg-3);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cx-index .n { color: var(--cx-fg-2); }
+.cx-index .em { color: var(--cx-fg-4); }
+
+/* hairline divider */
+.cx-rule { height: 1px; background: var(--cx-border); border: 0; margin: 0; }
+
+/* pill */
+.cx-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px 4px;
+  border: 1px solid var(--cx-border-2);
+  border-radius: 999px;
+  font-family: var(--cx-mono);
+  font-size: 11px;
+  color: var(--cx-fg-1);
+  background: transparent;
+  line-height: 1;
+  white-space: nowrap;
+}
+.cx-pill.accent { color: var(--cx-accent); border-color: oklch(0.45 0.10 60 / 0.5); background: var(--cx-accent-bg); }
+.cx-pill.add    { color: var(--cx-add); border-color: oklch(0.45 0.08 145 / 0.5); background: var(--cx-add-bg); }
+.cx-pill.del    { color: var(--cx-del); border-color: oklch(0.45 0.10 25 / 0.5); background: var(--cx-del-bg); }
+.cx-pill.solid  { background: var(--cx-bg-3); border-color: transparent; color: var(--cx-fg-1); }
+
+/* kbd */
+.cx-kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  font-family: var(--cx-mono);
+  font-size: 10.5px;
+  color: var(--cx-fg-2);
+  background: var(--cx-bg-2);
+  border: 1px solid var(--cx-border-2);
+  border-radius: 4px;
+  line-height: 1;
+}
+
+/* dot */
+.cx-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
+.cx-dot.accent { background: var(--cx-accent); }
+.cx-dot.add    { background: var(--cx-add); }
+.cx-dot.del    { background: var(--cx-del); }
+.cx-dot.warn   { background: var(--cx-warn); }
+.cx-dot.muted  { background: var(--cx-fg-4); }
+
+/* em-dashed sub-item (portfolio pattern: "—  built X") */
+.cx-em {
+  display: grid;
+  grid-template-columns: 12px 1fr;
+  gap: 10px;
+  color: var(--cx-fg-1);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+.cx-em::before { content: "—"; color: var(--cx-fg-4); }
+
+/* scrollbar stripped inside artboards (DC strips them too, but be explicit) */
+.cx *::-webkit-scrollbar { width: 0; height: 0; }
