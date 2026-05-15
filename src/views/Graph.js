@@ -25,6 +25,25 @@ const EDGE_STYLE = {
 };
 export function GraphView({ goToNote, graph = GRAPH, index = [], }) {
     const { nodes: rawNodes, edges } = graph;
+    const visibleEdges = useMemo(() => {
+        const byPair = new Map();
+        const priority = {
+            supersedes: 5,
+            derived: 4,
+            imports: 3,
+            cites: 2,
+            src: 1,
+            related: 0,
+        };
+        for (const edge of edges) {
+            const [a, b, kind] = edge;
+            const key = a < b ? `${a}\u0000${b}` : `${b}\u0000${a}`;
+            const current = byPair.get(key);
+            if (!current || priority[kind] > priority[current[2]])
+                byPair.set(key, edge);
+        }
+        return Array.from(byPair.values());
+    }, [edges]);
     const simRef = useRef(null);
     const [, setVersion] = useState(0);
     const tick = useCallback(() => setVersion((v) => (v + 1) % 1e9), []);
@@ -73,11 +92,9 @@ export function GraphView({ goToNote, graph = GRAPH, index = [], }) {
             return;
         let alpha = 1;
         let raf = 0;
-        const linkPairs = Array.from(new Map(edges.map(([a, b]) => {
-            const key = a < b ? `${a}\u0000${b}` : `${b}\u0000${a}`;
-            return [key, [a, b]];
-        })).values());
+        let frame = 0;
         const step = () => {
+            frame += 1;
             const sim = simRef.current;
             const nodes = sim.nodes;
             const byId = sim.byId;
@@ -98,7 +115,7 @@ export function GraphView({ goToNote, graph = GRAPH, index = [], }) {
                     b.vy += fy;
                 }
             }
-            for (const [aId, bId] of linkPairs) {
+            for (const [aId, bId] of visibleEdges) {
                 const a = byId[aId], b = byId[bId];
                 if (!a || !b)
                     continue;
@@ -114,8 +131,6 @@ export function GraphView({ goToNote, graph = GRAPH, index = [], }) {
             for (const n of nodes) {
                 n.vx -= n.x * tune.center * alpha;
                 n.vy -= n.y * tune.center * alpha;
-                n.vx += (Math.random() - 0.5) * 0.002 * alpha;
-                n.vy += (Math.random() - 0.5) * 0.002 * alpha;
             }
             const damp = 0.62;
             for (const n of nodes) {
@@ -136,17 +151,28 @@ export function GraphView({ goToNote, graph = GRAPH, index = [], }) {
                 n.x += n.vx * alpha;
                 n.y += n.vy * alpha;
             }
-            alpha = Math.max(0, alpha - 0.0035);
-            tick();
+            alpha = Math.max(0, alpha - 0.006);
+            if (frame % 3 === 0 || alpha <= 0.01)
+                tick();
             if (alpha > 0.01)
                 raf = requestAnimationFrame(step);
         };
         raf = requestAnimationFrame(step);
         return () => cancelAnimationFrame(raf);
-    }, [tune.linkDistance, tune.repel, tune.center, edges, tick]);
+    }, [tune.linkDistance, tune.repel, tune.center, visibleEdges, tick]);
     const svgRef = useRef(null);
+    const graphGroupRef = useRef(null);
     const dragRef = useRef(null);
     const panRef = useRef(null);
+    const applyViewport = useCallback(() => {
+        const svg = svgRef.current;
+        const group = graphGroupRef.current;
+        if (!svg || !group)
+            return;
+        const rect = svg.getBoundingClientRect();
+        const v = viewRef.current;
+        group.setAttribute('transform', `translate(${rect.width / 2 + v.x} ${rect.height / 2 + v.y}) scale(${v.zoom})`);
+    }, []);
     const screenToWorld = useCallback((sx, sy) => {
         const v = viewRef.current;
         const svg = svgRef.current;
@@ -176,11 +202,11 @@ export function GraphView({ goToNote, graph = GRAPH, index = [], }) {
             v.zoom = next;
             v.x = (px - cx) - wx * v.zoom;
             v.y = (py - cy) - wy * v.zoom;
-            tick();
+            applyViewport();
         };
         svg.addEventListener('wheel', handler, { passive: false });
         return () => svg.removeEventListener('wheel', handler);
-    }, [tick]);
+    }, [applyViewport]);
     const onNodePointerDown = (e, id) => {
         e.stopPropagation();
         const node = simRef.current?.byId[id];
@@ -213,7 +239,7 @@ export function GraphView({ goToNote, graph = GRAPH, index = [], }) {
             const v = viewRef.current;
             v.x = e.clientX - panRef.current.ox;
             v.y = e.clientY - panRef.current.oy;
-            tick();
+            applyViewport();
         }
     };
     const onPointerUp = () => {
@@ -235,14 +261,14 @@ export function GraphView({ goToNote, graph = GRAPH, index = [], }) {
         if (!selected)
             return null;
         const s = new Set([selected]);
-        for (const [a, b] of edges) {
+        for (const [a, b] of visibleEdges) {
             if (a === selected)
                 s.add(b);
             if (b === selected)
                 s.add(a);
         }
         return s;
-    }, [selected, edges]);
+    }, [selected, visibleEdges]);
     const searchMatches = useMemo(() => {
         if (!search.trim())
             return null;
@@ -259,12 +285,12 @@ export function GraphView({ goToNote, graph = GRAPH, index = [], }) {
         const out = {};
         for (const n of rawNodes)
             out[n.id] = 0;
-        for (const [a, b] of edges) {
+        for (const [a, b] of visibleEdges) {
             out[a] = (out[a] || 0) + 1;
             out[b] = (out[b] || 0) + 1;
         }
         return out;
-    }, [edges, rawNodes]);
+    }, [visibleEdges, rawNodes]);
     const isDim = (id, kind) => {
         if (!kindFilter[kind])
             return true;
@@ -293,7 +319,7 @@ export function GraphView({ goToNote, graph = GRAPH, index = [], }) {
         return Math.min(0.55, (z - tune.labelThreshold) * 0.75);
     };
     const selectedNode = selected && sim ? sim.byId[selected] : null;
-    const selectedDeg = selected ? edges.filter((e) => e[0] === selected || e[1] === selected).length : 0;
+    const selectedDeg = selected ? visibleEdges.filter((e) => e[0] === selected || e[1] === selected).length : 0;
     const selectedNote = selected
         ? NOTES.find((n) => n.id === selected) ||
             index.find((n) => n.id === selected || n.path === selected || n.path === selectedNode?.path)
@@ -324,17 +350,18 @@ export function GraphView({ goToNote, graph = GRAPH, index = [], }) {
             const r = svg.getBoundingClientRect();
             const z = Math.min(r.width / (w + 200), r.height / (h + 200), 1.4);
             viewRef.current = { x: -(minX + maxX) / 2 * z, y: -(minY + maxY) / 2 * z, zoom: z };
+            applyViewport();
             tick();
         }, 800);
         return () => clearTimeout(t);
-    }, [sim, tick]);
+    }, [applyViewport, sim, tick]);
     const view = viewRef.current;
     return (_jsxs("div", { className: "gr", children: [_jsxs("svg", { ref: svgRef, onPointerDown: onPanPointerDown, onPointerMove: onPointerMove, onPointerUp: onPointerUp, onPointerCancel: onPointerUp, onClick: (e) => { if (e.target === svgRef.current)
                     setSelected(null); }, children: [_jsx("defs", { children: _jsxs("radialGradient", { id: "halo-focus", cx: "50%", cy: "50%", r: "50%", children: [_jsx("stop", { offset: "0%", stopColor: "#f1f3f7", stopOpacity: "0.34" }), _jsx("stop", { offset: "100%", stopColor: "#f1f3f7", stopOpacity: "0" })] }) }), sim && (() => {
                         const svgRect = svgRef.current?.getBoundingClientRect();
                         const cx = (svgRect?.width || 1240) / 2;
                         const cy = (svgRect?.height || 720) / 2;
-                        return (_jsxs("g", { transform: `translate(${cx + view.x} ${cy + view.y}) scale(${view.zoom})`, children: [edges.map(([a, b, kind], i) => {
+                        return (_jsxs("g", { ref: graphGroupRef, transform: `translate(${cx + view.x} ${cy + view.y}) scale(${view.zoom})`, children: [visibleEdges.map(([a, b, kind], i) => {
                                     const na = sim.byId[a], nb = sim.byId[b];
                                     if (!na || !nb)
                                         return null;
@@ -348,8 +375,16 @@ export function GraphView({ goToNote, graph = GRAPH, index = [], }) {
                                     const c = KIND_COLORS[n.kind] || KIND_COLORS.knowledge;
                                     const baseR = Math.min(9.5, 2.8 + Math.sqrt(degreeById[n.id] || 1) * 0.88);
                                     const r = (isFocus || isHover) ? baseR + 2.8 : baseR;
+                                    return (_jsxs("g", { className: `gr-node ${n.kind}`, opacity: n.faded ? 0.28 : (dim ? 0.16 : 0.92), onPointerDown: (e) => onNodePointerDown(e, n.id), onMouseEnter: () => setHover(n.id), onMouseLeave: () => setHover(null), onDoubleClick: () => openNode(n.id), style: { cursor: 'pointer' }, children: [(isFocus || isHover) && (_jsx("circle", { cx: n.x, cy: n.y, r: 26, fill: "url(#halo-focus)" })), _jsx("circle", { cx: n.x, cy: n.y, r: r, fill: c.fill, stroke: c.stroke, strokeWidth: (isFocus ? 1.8 : 0.8) / view.zoom })] }, n.id));
+                                }), sim.nodes.map((n) => {
                                     const textOpacity = labelOpacity(n.id);
-                                    return (_jsxs("g", { className: `gr-node ${n.kind}`, opacity: n.faded ? 0.28 : (dim ? 0.16 : 0.92), onPointerDown: (e) => onNodePointerDown(e, n.id), onMouseEnter: () => setHover(n.id), onMouseLeave: () => setHover(null), onDoubleClick: () => openNode(n.id), style: { cursor: 'pointer' }, children: [(isFocus || isHover) && (_jsx("circle", { cx: n.x, cy: n.y, r: 26, fill: "url(#halo-focus)" })), _jsx("circle", { cx: n.x, cy: n.y, r: r, fill: c.fill, stroke: c.stroke, strokeWidth: (isFocus ? 1.8 : 0.8) / view.zoom }), textOpacity > 0.03 && (_jsx("text", { x: n.x, y: n.y + r + 12 / view.zoom, opacity: textOpacity, fontSize: 10 / view.zoom, fill: isFocus || isHover ? '#eef0f4' : '#a8abb1', children: n.label }))] }, n.id));
+                                    if (textOpacity <= 0.03)
+                                        return null;
+                                    const isFocus = selected === n.id;
+                                    const isHover = hover === n.id;
+                                    const baseR = Math.min(9.5, 2.8 + Math.sqrt(degreeById[n.id] || 1) * 0.88);
+                                    const r = (isFocus || isHover) ? baseR + 2.8 : baseR;
+                                    return (_jsx("g", { className: "gr-label", children: textOpacity > 0.03 && (_jsx("text", { x: n.x, y: n.y + r + 12 / view.zoom, opacity: textOpacity, fontSize: 10 / view.zoom, fill: isFocus || isHover ? '#eef0f4' : '#a8abb1', children: n.label })) }, `${n.id}-label`));
                                 })] }));
-                    })()] }), _jsxs("div", { className: "gr-controls", children: [_jsxs("div", { className: "gr-search", children: [_jsxs("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", stroke: "var(--cx-fg-3)", strokeWidth: "1.4", children: [_jsx("circle", { cx: "5", cy: "5", r: "3.5" }), _jsx("path", { d: "M8 8l3 3", strokeLinecap: "round" })] }), _jsx("input", { placeholder: "search nodes\u2026", value: search, onChange: (e) => setSearch(e.target.value) }), searchMatches && _jsx("span", { className: "count", children: searchMatches.size })] }), _jsx("div", { className: "gr-chips", children: Object.entries(kindFilter).map(([k, on]) => (_jsxs("span", { className: `gr-chip ${on ? 'on' : ''}`, onClick: () => setKindFilter((kf) => ({ ...kf, [k]: !kf[k] })), children: [_jsx("span", { className: "sw", style: { background: KIND_COLORS[k].stroke } }), k] }, k))) })] }), _jsxs("div", { className: "gr-settings", children: [_jsx("div", { className: "label", children: "\u2014 Forces" }), _jsxs("div", { className: "row", children: [_jsxs("div", { className: "top", children: [_jsx("span", { children: "Link distance" }), _jsx("em", { children: tune.linkDistance })] }), _jsx("input", { type: "range", min: "32", max: "180", step: "2", value: tune.linkDistance, onChange: (e) => setTune((t) => ({ ...t, linkDistance: +e.target.value })) })] }), _jsxs("div", { className: "row", children: [_jsxs("div", { className: "top", children: [_jsx("span", { children: "Repel" }), _jsx("em", { children: tune.repel })] }), _jsx("input", { type: "range", min: "400", max: "3200", step: "50", value: tune.repel, onChange: (e) => setTune((t) => ({ ...t, repel: +e.target.value })) })] }), _jsxs("div", { className: "row", children: [_jsxs("div", { className: "top", children: [_jsx("span", { children: "Center pull" }), _jsx("em", { children: tune.center.toFixed(3) })] }), _jsx("input", { type: "range", min: "0", max: "0.12", step: "0.002", value: tune.center, onChange: (e) => setTune((t) => ({ ...t, center: +e.target.value })) })] }), _jsxs("div", { className: "row", children: [_jsxs("div", { className: "top", children: [_jsx("span", { children: "Label threshold" }), _jsx("em", { children: tune.labelThreshold.toFixed(2) })] }), _jsx("input", { type: "range", min: "0", max: "1.5", step: "0.05", value: tune.labelThreshold, onChange: (e) => setTune((t) => ({ ...t, labelThreshold: +e.target.value })) })] }), _jsx("button", { className: "preset", onClick: () => setTune(OBSIDIAN_TUNE), children: "Obsidian preset" })] }), _jsxs("div", { className: "gr-legend", children: [_jsxs("div", { className: "stat", children: [_jsx("span", { children: "nodes" }), _jsx("span", { className: "n", children: rawNodes.length })] }), _jsxs("div", { className: "stat", children: [_jsx("span", { children: "edges" }), _jsx("span", { className: "n", children: edges.length })] }), _jsxs("div", { className: "stat", children: [_jsx("span", { children: "zoom" }), _jsxs("span", { className: "n", children: [view.zoom.toFixed(2), "\u00D7"] })] }), _jsxs("div", { className: "hint", children: [_jsx("kbd", { children: "drag" }), " pan \u00B7 ", _jsx("kbd", { children: "wheel" }), " zoom \u00B7 ", _jsx("kbd", { children: "click" }), " focus \u00B7 ", _jsx("kbd", { children: "2\u00D7" }), " open"] })] }), selected && selectedNode && (_jsxs("div", { className: "gr-detail", children: [_jsxs("div", { className: "id", children: [selected, " \u00B7 ", selectedNode.kind.toUpperCase()] }), _jsx("h4", { children: selectedNode.label }), selectedNote && selectedNote.lede && _jsx("p", { children: selectedNote.lede }), _jsxs("div", { className: "stats", children: [_jsxs("div", { children: [_jsx("span", { className: "n", children: selectedDeg }), _jsx("span", { className: "l", children: "degree" })] }), _jsxs("div", { children: [_jsx("span", { className: "n", children: edges.filter((e) => e[1] === selected).length }), _jsx("span", { className: "l", children: "in" })] }), _jsxs("div", { children: [_jsx("span", { className: "n", children: edges.filter((e) => e[0] === selected).length }), _jsx("span", { className: "l", children: "out" })] })] }), selectedNote && (_jsx("button", { className: "open", onClick: () => openNode(selected), children: "open in Knowledge \u2192" }))] }))] }));
+                    })()] }), _jsxs("div", { className: "gr-controls", children: [_jsxs("div", { className: "gr-search", children: [_jsxs("svg", { width: "12", height: "12", viewBox: "0 0 12 12", fill: "none", stroke: "var(--cx-fg-3)", strokeWidth: "1.4", children: [_jsx("circle", { cx: "5", cy: "5", r: "3.5" }), _jsx("path", { d: "M8 8l3 3", strokeLinecap: "round" })] }), _jsx("input", { placeholder: "search nodes\u2026", value: search, onChange: (e) => setSearch(e.target.value) }), searchMatches && _jsx("span", { className: "count", children: searchMatches.size })] }), _jsx("div", { className: "gr-chips", children: Object.entries(kindFilter).map(([k, on]) => (_jsxs("span", { className: `gr-chip ${on ? 'on' : ''}`, onClick: () => setKindFilter((kf) => ({ ...kf, [k]: !kf[k] })), children: [_jsx("span", { className: "sw", style: { background: KIND_COLORS[k].stroke } }), k] }, k))) })] }), _jsxs("div", { className: "gr-settings", children: [_jsx("div", { className: "label", children: "\u2014 Forces" }), _jsxs("div", { className: "row", children: [_jsxs("div", { className: "top", children: [_jsx("span", { children: "Link distance" }), _jsx("em", { children: tune.linkDistance })] }), _jsx("input", { type: "range", min: "32", max: "180", step: "2", value: tune.linkDistance, onChange: (e) => setTune((t) => ({ ...t, linkDistance: +e.target.value })) })] }), _jsxs("div", { className: "row", children: [_jsxs("div", { className: "top", children: [_jsx("span", { children: "Repel" }), _jsx("em", { children: tune.repel })] }), _jsx("input", { type: "range", min: "400", max: "3200", step: "50", value: tune.repel, onChange: (e) => setTune((t) => ({ ...t, repel: +e.target.value })) })] }), _jsxs("div", { className: "row", children: [_jsxs("div", { className: "top", children: [_jsx("span", { children: "Center pull" }), _jsx("em", { children: tune.center.toFixed(3) })] }), _jsx("input", { type: "range", min: "0", max: "0.12", step: "0.002", value: tune.center, onChange: (e) => setTune((t) => ({ ...t, center: +e.target.value })) })] }), _jsxs("div", { className: "row", children: [_jsxs("div", { className: "top", children: [_jsx("span", { children: "Label threshold" }), _jsx("em", { children: tune.labelThreshold.toFixed(2) })] }), _jsx("input", { type: "range", min: "0", max: "3", step: "0.05", value: tune.labelThreshold, onChange: (e) => setTune((t) => ({ ...t, labelThreshold: +e.target.value })) })] }), _jsx("button", { className: "preset", onClick: () => setTune(OBSIDIAN_TUNE), children: "Obsidian preset" })] }), _jsxs("div", { className: "gr-legend", children: [_jsxs("div", { className: "stat", children: [_jsx("span", { children: "nodes" }), _jsx("span", { className: "n", children: rawNodes.length })] }), _jsxs("div", { className: "stat", children: [_jsx("span", { children: "links" }), _jsx("span", { className: "n", children: visibleEdges.length })] }), _jsxs("div", { className: "stat", children: [_jsx("span", { children: "zoom" }), _jsxs("span", { className: "n", children: [view.zoom.toFixed(2), "\u00D7"] })] }), _jsxs("div", { className: "hint", children: [_jsx("kbd", { children: "drag" }), " pan \u00B7 ", _jsx("kbd", { children: "wheel" }), " zoom \u00B7 ", _jsx("kbd", { children: "click" }), " focus \u00B7 ", _jsx("kbd", { children: "2\u00D7" }), " open"] })] }), selected && selectedNode && (_jsxs("div", { className: "gr-detail", children: [_jsxs("div", { className: "id", children: [selected, " \u00B7 ", selectedNode.kind.toUpperCase()] }), _jsx("h4", { children: selectedNode.label }), selectedNote && selectedNote.lede && _jsx("p", { children: selectedNote.lede }), _jsxs("div", { className: "stats", children: [_jsxs("div", { children: [_jsx("span", { className: "n", children: selectedDeg }), _jsx("span", { className: "l", children: "degree" })] }), _jsxs("div", { children: [_jsx("span", { className: "n", children: visibleEdges.filter((e) => e[1] === selected).length }), _jsx("span", { className: "l", children: "in" })] }), _jsxs("div", { children: [_jsx("span", { className: "n", children: visibleEdges.filter((e) => e[0] === selected).length }), _jsx("span", { className: "l", children: "out" })] })] }), selectedNote && (_jsx("button", { className: "open", onClick: () => openNode(selected), children: "open in Knowledge \u2192" }))] }))] }));
 }

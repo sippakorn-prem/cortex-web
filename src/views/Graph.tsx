@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { GRAPH } from '../data/graph';
 import { NOTES } from '../data/notes';
-import type { Graph, GraphNode, NoteKind } from '../data/types';
+import type { Graph, GraphEdge, GraphNode, NoteKind } from '../data/types';
 import type { ApiIndexEntry } from '../lib/cortex-api';
 
 interface SimNode extends GraphNode {
@@ -48,6 +48,24 @@ export function GraphView({
   index?: ApiIndexEntry[];
 }) {
   const { nodes: rawNodes, edges } = graph;
+  const visibleEdges = useMemo<GraphEdge[]>(() => {
+    const byPair = new Map<string, GraphEdge>();
+    const priority: Record<string, number> = {
+      supersedes: 5,
+      derived: 4,
+      imports: 3,
+      cites: 2,
+      src: 1,
+      related: 0,
+    };
+    for (const edge of edges) {
+      const [a, b, kind] = edge;
+      const key = a < b ? `${a}\u0000${b}` : `${b}\u0000${a}`;
+      const current = byPair.get(key);
+      if (!current || priority[kind] > priority[current[2]]) byPair.set(key, edge);
+    }
+    return Array.from(byPair.values());
+  }, [edges]);
 
   const simRef = useRef<{ nodes: SimNode[]; byId: Record<string, SimNode> } | null>(null);
   const [, setVersion] = useState(0);
@@ -99,13 +117,9 @@ export function GraphView({
     if (!simRef.current) return;
     let alpha = 1;
     let raf = 0;
-    const linkPairs = Array.from(
-      new Map(edges.map(([a, b]) => {
-        const key = a < b ? `${a}\u0000${b}` : `${b}\u0000${a}`;
-        return [key, [a, b] as [string, string]];
-      })).values()
-    );
+    let frame = 0;
     const step = () => {
+      frame += 1;
       const sim = simRef.current!;
       const nodes = sim.nodes;
       const byId = sim.byId;
@@ -123,7 +137,7 @@ export function GraphView({
           b.vx += fx; b.vy += fy;
         }
       }
-      for (const [aId, bId] of linkPairs) {
+      for (const [aId, bId] of visibleEdges) {
         const a = byId[aId], b = byId[bId];
         if (!a || !b) continue;
         const dx = b.x - a.x, dy = b.y - a.y;
@@ -136,8 +150,6 @@ export function GraphView({
       for (const n of nodes) {
         n.vx -= n.x * tune.center * alpha;
         n.vy -= n.y * tune.center * alpha;
-        n.vx += (Math.random() - 0.5) * 0.002 * alpha;
-        n.vy += (Math.random() - 0.5) * 0.002 * alpha;
       }
       const damp = 0.62;
       for (const n of nodes) {
@@ -148,17 +160,30 @@ export function GraphView({
         n.x += n.vx * alpha;
         n.y += n.vy * alpha;
       }
-      alpha = Math.max(0, alpha - 0.0035);
-      tick();
+      alpha = Math.max(0, alpha - 0.006);
+      if (frame % 3 === 0 || alpha <= 0.01) tick();
       if (alpha > 0.01) raf = requestAnimationFrame(step);
     };
     raf = requestAnimationFrame(step);
     return () => cancelAnimationFrame(raf);
-  }, [tune.linkDistance, tune.repel, tune.center, edges, tick]);
+  }, [tune.linkDistance, tune.repel, tune.center, visibleEdges, tick]);
 
   const svgRef = useRef<SVGSVGElement>(null);
+  const graphGroupRef = useRef<SVGGElement>(null);
   const dragRef = useRef<{ id: string; ox: number; oy: number; moved: boolean } | null>(null);
   const panRef = useRef<{ ox: number; oy: number } | null>(null);
+
+  const applyViewport = useCallback(() => {
+    const svg = svgRef.current;
+    const group = graphGroupRef.current;
+    if (!svg || !group) return;
+    const rect = svg.getBoundingClientRect();
+    const v = viewRef.current;
+    group.setAttribute(
+      'transform',
+      `translate(${rect.width / 2 + v.x} ${rect.height / 2 + v.y}) scale(${v.zoom})`
+    );
+  }, []);
 
   const screenToWorld = useCallback((sx: number, sy: number) => {
     const v = viewRef.current;
@@ -188,11 +213,11 @@ export function GraphView({
       v.zoom = next;
       v.x = (px - cx) - wx * v.zoom;
       v.y = (py - cy) - wy * v.zoom;
-      tick();
+      applyViewport();
     };
     svg.addEventListener('wheel', handler, { passive: false });
     return () => svg.removeEventListener('wheel', handler);
-  }, [tick]);
+  }, [applyViewport]);
 
   const onNodePointerDown = (e: React.PointerEvent, id: string) => {
     e.stopPropagation();
@@ -226,7 +251,7 @@ export function GraphView({
       const v = viewRef.current;
       v.x = e.clientX - panRef.current.ox;
       v.y = e.clientY - panRef.current.oy;
-      tick();
+      applyViewport();
     }
   };
 
@@ -249,12 +274,12 @@ export function GraphView({
   const neighbors = useMemo(() => {
     if (!selected) return null;
     const s = new Set<string>([selected]);
-    for (const [a, b] of edges) {
+    for (const [a, b] of visibleEdges) {
       if (a === selected) s.add(b);
       if (b === selected) s.add(a);
     }
     return s;
-  }, [selected, edges]);
+  }, [selected, visibleEdges]);
 
   const searchMatches = useMemo(() => {
     if (!search.trim()) return null;
@@ -270,12 +295,12 @@ export function GraphView({
   const degreeById = useMemo(() => {
     const out: Record<string, number> = {};
     for (const n of rawNodes) out[n.id] = 0;
-    for (const [a, b] of edges) {
+    for (const [a, b] of visibleEdges) {
       out[a] = (out[a] || 0) + 1;
       out[b] = (out[b] || 0) + 1;
     }
     return out;
-  }, [edges, rawNodes]);
+  }, [visibleEdges, rawNodes]);
 
   const isDim = (id: string, kind: NoteKind) => {
     if (!kindFilter[kind]) return true;
@@ -300,7 +325,7 @@ export function GraphView({
   };
 
   const selectedNode = selected && sim ? sim.byId[selected] : null;
-  const selectedDeg = selected ? edges.filter((e) => e[0] === selected || e[1] === selected).length : 0;
+  const selectedDeg = selected ? visibleEdges.filter((e) => e[0] === selected || e[1] === selected).length : 0;
   const selectedNote = selected
     ? NOTES.find((n) => n.id === selected) ||
       index.find((n) => n.id === selected || n.path === selected || n.path === selectedNode?.path)
@@ -325,10 +350,11 @@ export function GraphView({
       const r = svg.getBoundingClientRect();
       const z = Math.min(r.width / (w + 200), r.height / (h + 200), 1.4);
       viewRef.current = { x: -(minX + maxX) / 2 * z, y: -(minY + maxY) / 2 * z, zoom: z };
+      applyViewport();
       tick();
     }, 800);
     return () => clearTimeout(t);
-  }, [sim, tick]);
+  }, [applyViewport, sim, tick]);
 
   const view = viewRef.current;
 
@@ -352,8 +378,8 @@ export function GraphView({
           const cx = (svgRect?.width || 1240) / 2;
           const cy = (svgRect?.height || 720) / 2;
           return (
-            <g transform={`translate(${cx + view.x} ${cy + view.y}) scale(${view.zoom})`}>
-              {edges.map(([a, b, kind], i) => {
+            <g ref={graphGroupRef} transform={`translate(${cx + view.x} ${cy + view.y}) scale(${view.zoom})`}>
+              {visibleEdges.map(([a, b, kind], i) => {
                 const na = sim.byId[a], nb = sim.byId[b];
                 if (!na || !nb) return null;
                 const dim = isEdgeDim(a, b) || !kindFilter[na.kind] || !kindFilter[nb.kind];
@@ -375,7 +401,6 @@ export function GraphView({
                 const c = KIND_COLORS[n.kind] || KIND_COLORS.knowledge;
                 const baseR = Math.min(9.5, 2.8 + Math.sqrt(degreeById[n.id] || 1) * 0.88);
                 const r = (isFocus || isHover) ? baseR + 2.8 : baseR;
-                const textOpacity = labelOpacity(n.id);
                 return (
                   <g key={n.id} className={`gr-node ${n.kind}`}
                     opacity={n.faded ? 0.28 : (dim ? 0.16 : 0.92)}
@@ -392,6 +417,18 @@ export function GraphView({
                       stroke={c.stroke}
                       strokeWidth={(isFocus ? 1.8 : 0.8) / view.zoom}
                     />
+                  </g>
+                );
+              })}
+              {sim.nodes.map((n) => {
+                const textOpacity = labelOpacity(n.id);
+                if (textOpacity <= 0.03) return null;
+                const isFocus = selected === n.id;
+                const isHover = hover === n.id;
+                const baseR = Math.min(9.5, 2.8 + Math.sqrt(degreeById[n.id] || 1) * 0.88);
+                const r = (isFocus || isHover) ? baseR + 2.8 : baseR;
+                return (
+                  <g key={`${n.id}-label`} className="gr-label">
                     {textOpacity > 0.03 && (
                       <text x={n.x} y={n.y + r + 12 / view.zoom}
                         opacity={textOpacity}
@@ -451,7 +488,7 @@ export function GraphView({
         </div>
         <div className="row">
           <div className="top"><span>Label threshold</span><em>{tune.labelThreshold.toFixed(2)}</em></div>
-          <input type="range" min="0" max="1.5" step="0.05" value={tune.labelThreshold}
+          <input type="range" min="0" max="3" step="0.05" value={tune.labelThreshold}
             onChange={(e) => setTune((t) => ({ ...t, labelThreshold: +e.target.value }))} />
         </div>
         <button className="preset" onClick={() => setTune(OBSIDIAN_TUNE)}>Obsidian preset</button>
@@ -459,7 +496,7 @@ export function GraphView({
 
       <div className="gr-legend">
         <div className="stat"><span>nodes</span><span className="n">{rawNodes.length}</span></div>
-        <div className="stat"><span>edges</span><span className="n">{edges.length}</span></div>
+        <div className="stat"><span>links</span><span className="n">{visibleEdges.length}</span></div>
         <div className="stat"><span>zoom</span><span className="n">{view.zoom.toFixed(2)}×</span></div>
         <div className="hint">
           <kbd>drag</kbd> pan · <kbd>wheel</kbd> zoom · <kbd>click</kbd> focus · <kbd>2×</kbd> open
@@ -473,8 +510,8 @@ export function GraphView({
           {selectedNote && selectedNote.lede && <p>{selectedNote.lede}</p>}
           <div className="stats">
             <div><span className="n">{selectedDeg}</span><span className="l">degree</span></div>
-            <div><span className="n">{edges.filter((e) => e[1] === selected).length}</span><span className="l">in</span></div>
-            <div><span className="n">{edges.filter((e) => e[0] === selected).length}</span><span className="l">out</span></div>
+            <div><span className="n">{visibleEdges.filter((e) => e[1] === selected).length}</span><span className="l">in</span></div>
+            <div><span className="n">{visibleEdges.filter((e) => e[0] === selected).length}</span><span className="l">out</span></div>
           </div>
           {selectedNote && (
             <button className="open" onClick={() => openNode(selected)}>

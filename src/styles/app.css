@@ -368,7 +368,8 @@ body { background: var(--cx-bg); overflow: hidden; }
 }
 .gr svg.panning { cursor: grabbing; }
 .gr-node circle { transition: r 120ms ease, opacity 120ms ease; }
-.gr-node text {
+.gr-node text,
+.gr-label text {
   font-family: var(--cx-sans);
   font-size: 10px;
   fill: #a8abb1;
@@ -377,7 +378,7 @@ body { background: var(--cx-bg); overflow: hidden; }
   user-select: none;
   paint-order: stroke;
   stroke: #1f1f1f;
-  stroke-width: 4px;
+  stroke-width: 5px;
   stroke-linejoin: round;
 }
 .gr-node.session text { font-family: var(--cx-mono); font-size: 9.5px; }
